@@ -1,4 +1,4 @@
-# gin-csrf [![Build Status](https://travis-ci.org/srbry/gin-csrf.svg?branch=main)](https://travis-ci.org/srbry/gin-csrf)
+# gin-csrf ![Build status](https://github.com/srbry/gin-csrf/actions/workflows/unit-test.yml/badge.svg)
 
 CSRF protection middleware for [Gin]. This middleware has to be used with [gin-contrib/sessions](https://github.com/gin-contrib/sessions).
 
