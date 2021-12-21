@@ -1,12 +1,13 @@
 package csrf
 
 import (
-	"github.com/gin-contrib/sessions/cookie"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-contrib/sessions/cookie"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -16,13 +17,24 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-func newServer(options Options) *gin.Engine {
+func newServer(csrfManager CSRFManager) *gin.Engine {
 	g := gin.New()
 
 	store := cookie.NewStore([]byte("secret123"))
 
 	g.Use(sessions.Sessions("my_session", store))
-	g.Use(Middleware(options))
+	g.Use(csrfManager.Middleware())
+
+	return g
+}
+
+func newServerWithNamedSession(csrfManager CSRFManager) *gin.Engine {
+	g := gin.New()
+
+	store := cookie.NewStore([]byte("secret123"))
+
+	g.Use(sessions.SessionsMany([]string{"my_session", "my-test-session"}, store))
+	g.Use(csrfManager.Middleware())
 
 	return g
 }
@@ -59,12 +71,13 @@ func request(server *gin.Engine, options requestOptions) *httptest.ResponseRecor
 
 func TestForm(t *testing.T) {
 	var token string
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret: "secret123",
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		token = GetToken(c)
+		token = csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {
@@ -89,12 +102,43 @@ func TestForm(t *testing.T) {
 
 func TestQueryString(t *testing.T) {
 	var token string
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret: "secret123",
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		token = GetToken(c)
+		token = csrfManager.GetToken(c)
+	})
+
+	g.POST("/login", func(c *gin.Context) {
+		c.String(http.StatusOK, "OK")
+	})
+
+	r1 := request(g, requestOptions{URL: "/login"})
+	r2 := request(g, requestOptions{
+		Method: "POST",
+		URL:    "/login?_csrf=" + token,
+		Headers: map[string]string{
+			"Cookie": r1.Header().Get("Set-Cookie"),
+		},
+	})
+
+	if body := r2.Body.String(); body != "OK" {
+		t.Error("Response is not OK: ", body)
+	}
+}
+
+func TestQueryStringWithNamedSession(t *testing.T) {
+	var token string
+	csrfManager := &DefaultCSRFManager{
+		Secret:      "secret123",
+		SessionName: "my-test-session",
+	}
+	g := newServerWithNamedSession(csrfManager)
+
+	g.GET("/login", func(c *gin.Context) {
+		token = csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {
@@ -117,12 +161,13 @@ func TestQueryString(t *testing.T) {
 
 func TestQueryHeader1(t *testing.T) {
 	var token string
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret: "secret123",
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		token = GetToken(c)
+		token = csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {
@@ -146,12 +191,13 @@ func TestQueryHeader1(t *testing.T) {
 
 func TestQueryHeader2(t *testing.T) {
 	var token string
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret: "secret123",
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		token = GetToken(c)
+		token = csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {
@@ -175,15 +221,16 @@ func TestQueryHeader2(t *testing.T) {
 
 func TestErrorFunc(t *testing.T) {
 	result := ""
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret: "secret123",
 		ErrorFunc: func(c *gin.Context) {
 			result = "something wrong"
 		},
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		GetToken(c)
+		csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {
@@ -205,13 +252,14 @@ func TestErrorFunc(t *testing.T) {
 }
 
 func TestIgnoreMethods(t *testing.T) {
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret:        "secret123",
 		IgnoreMethods: []string{"GET", "POST"},
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		GetToken(c)
+		csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {
@@ -234,15 +282,16 @@ func TestIgnoreMethods(t *testing.T) {
 
 func TestTokenGetter(t *testing.T) {
 	var token string
-	g := newServer(Options{
+	csrfManager := &DefaultCSRFManager{
 		Secret: "secret123",
 		TokenGetter: func(c *gin.Context) string {
 			return c.Request.FormValue("wtf")
 		},
-	})
+	}
+	g := newServer(csrfManager)
 
 	g.GET("/login", func(c *gin.Context) {
-		token = GetToken(c)
+		token = csrfManager.GetToken(c)
 	})
 
 	g.POST("/login", func(c *gin.Context) {

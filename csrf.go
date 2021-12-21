@@ -39,12 +39,95 @@ var defaultTokenGetter = func(c *gin.Context) string {
 	return ""
 }
 
-// Options stores configurations for a CSRF middleware.
-type Options struct {
+// CSRFManager methods for adding a gin middleware and token validation
+type CSRFManager interface {
+	Middleware() gin.HandlerFunc
+	GetToken(*gin.Context) string
+}
+
+// DefaultCSRFManager stores configurations for a CSRF middleware.
+type DefaultCSRFManager struct {
 	Secret        string
 	IgnoreMethods []string
 	ErrorFunc     gin.HandlerFunc
 	TokenGetter   func(c *gin.Context) string
+	SessionName   string
+}
+
+// Middleware validates CSRF token.
+func (csrfManager *DefaultCSRFManager) Middleware() gin.HandlerFunc {
+	ignoreMethods := csrfManager.IgnoreMethods
+	errorFunc := csrfManager.ErrorFunc
+	tokenGetter := csrfManager.TokenGetter
+
+	if ignoreMethods == nil {
+		ignoreMethods = defaultIgnoreMethods
+	}
+
+	if errorFunc == nil {
+		errorFunc = defaultErrorFunc
+	}
+
+	if tokenGetter == nil {
+		tokenGetter = defaultTokenGetter
+	}
+
+	return func(c *gin.Context) {
+		session := csrfManager.getSession(c)
+		c.Set(csrfSecret, csrfManager.Secret)
+
+		if inArray(ignoreMethods, c.Request.Method) {
+			c.Next()
+			return
+		}
+
+		salt, ok := session.Get(csrfSalt).(string)
+
+		if !ok || len(salt) == 0 {
+			errorFunc(c)
+			return
+		}
+
+		token := tokenGetter(c)
+
+		if tokenize(csrfManager.Secret, salt) != token {
+			errorFunc(c)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// GetToken returns a CSRF token.
+func (csrfManager *DefaultCSRFManager) GetToken(c *gin.Context) string {
+	session := csrfManager.getSession(c)
+	secret := c.MustGet(csrfSecret).(string)
+
+	if t, ok := c.Get(csrfToken); ok {
+		return t.(string)
+	}
+
+	salt, ok := session.Get(csrfSalt).(string)
+	if !ok {
+		salt = uniuri.New()
+		session.Set(csrfSalt, salt)
+		session.Save()
+	}
+	token := tokenize(secret, salt)
+	c.Set(csrfToken, token)
+
+	return token
+}
+
+func (csrfManager *DefaultCSRFManager) getSession(c *gin.Context) sessions.Session {
+	var session sessions.Session
+	if csrfManager.SessionName == "" {
+		session = sessions.Default(c)
+	} else {
+		session = sessions.DefaultMany(c, csrfManager.SessionName)
+	}
+	return session
 }
 
 func tokenize(secret, salt string) string {
@@ -66,70 +149,4 @@ func inArray(arr []string, value string) bool {
 	}
 
 	return inarr
-}
-
-// Middleware validates CSRF token.
-func Middleware(options Options) gin.HandlerFunc {
-	ignoreMethods := options.IgnoreMethods
-	errorFunc := options.ErrorFunc
-	tokenGetter := options.TokenGetter
-
-	if ignoreMethods == nil {
-		ignoreMethods = defaultIgnoreMethods
-	}
-
-	if errorFunc == nil {
-		errorFunc = defaultErrorFunc
-	}
-
-	if tokenGetter == nil {
-		tokenGetter = defaultTokenGetter
-	}
-
-	return func(c *gin.Context) {
-		session := sessions.Default(c)
-		c.Set(csrfSecret, options.Secret)
-
-		if inArray(ignoreMethods, c.Request.Method) {
-			c.Next()
-			return
-		}
-
-		salt, ok := session.Get(csrfSalt).(string)
-
-		if !ok || len(salt) == 0 {
-			errorFunc(c)
-			return
-		}
-
-		token := tokenGetter(c)
-
-		if tokenize(options.Secret, salt) != token {
-			errorFunc(c)
-			return
-		}
-
-		c.Next()
-	}
-}
-
-// GetToken returns a CSRF token.
-func GetToken(c *gin.Context) string {
-	session := sessions.Default(c)
-	secret := c.MustGet(csrfSecret).(string)
-
-	if t, ok := c.Get(csrfToken); ok {
-		return t.(string)
-	}
-
-	salt, ok := session.Get(csrfSalt).(string)
-	if !ok {
-		salt = uniuri.New()
-		session.Set(csrfSalt, salt)
-		session.Save()
-	}
-	token := tokenize(secret, salt)
-	c.Set(csrfToken, token)
-
-	return token
 }
